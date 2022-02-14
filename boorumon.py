@@ -59,7 +59,8 @@ async def heartbeat(ws):
     await asyncio.sleep(30)
     asyncio.get_event_loop().create_task(heartbeat(ws))
 
-async def derpimon(session, wsurl: str):
+async def monbooru(session: aiohttp.ClientSession, wsurl: str):
+    ''' Monitor image boorus for new uploads '''
     redis = aioredis.from_url('redis://localhost/')
 
     async with websockets.connect(wsurl) as ws:
@@ -71,9 +72,9 @@ async def derpimon(session, wsurl: str):
             if event == 'image:create':
                 pending_images[payload['image']['id']] = payload['image']
                 if (wsurl == DERPI_WS_URL):
-                    await redis.publish('derpimon', f"https://derpibooru.org/images/{payload['image']['id']}")
+                    await redis.publish('boorumon', f"https://derpibooru.org/images/{payload['image']['id']}")
                 elif (wsurl == PONER_WS_URL):
-                    await redis.publish('derpimon', f"https://ponerpics.org/images/{payload['image']['id']}")
+                    await redis.publish('boorumon', f"https://ponerpics.org/images/{payload['image']['id']}")
                 print(payload)
             elif event == 'image:process':
                 image_id = payload['image_id']
@@ -83,7 +84,7 @@ async def derpimon(session, wsurl: str):
 async def main():
     session = aiohttp.ClientSession()
     await asyncio.gather(
-        derpimon(session, DERPI_WS_URL),
-        derpimon(session, PONER_WS_URL)
+        monbooru(session, DERPI_WS_URL),
+        monbooru(session, PONER_WS_URL)
     )
 asyncio.run(main())
