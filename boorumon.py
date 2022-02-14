@@ -24,7 +24,7 @@ if inDebugMode:
 
 pending_images = {}
 
-with open('boorumon.toml.example', 'r') as fp:
+with open('boorumon.toml', 'r') as fp:
     config = toml.load(fp)
 
 # Make cache directory if not available
