@@ -13,6 +13,15 @@ DERPI_WS_URL    = 'wss://derpibooru.org/socket/websocket?vsn=2.0.0'
 JOIN_EVENT      = [0, 0, 'firehose', 'phx_join', {}]
 HEARTBEAT_EVENT = [0, 0, 'phoenix', 'heartbeat', {}]
 
+inDebugMode = False
+
+# Enable verbose mode
+if inDebugMode:
+    import logging
+    logger = logging.getLogger('websockets')
+    logger.setLevel(logging.DEBUG)
+    logger.addHandler(logging.StreamHandler())
+
 pending_images = {}
 
 with open('boorumon.toml.example', 'r') as fp:
