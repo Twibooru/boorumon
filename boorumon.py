@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import os
 import json
 import toml
 import asyncio
@@ -15,6 +16,11 @@ pending_images = {}
 with open('boorumon.toml', 'r') as fp:
     config = toml.load(fp)
 
+# Make cache directory if not available
+cachefp = './cache'
+if (not os.path.exists(cachefp)):
+    os.mkdir(cachefp)
+
 PROXY = config['proxy']
 
 # Save an image file and metadata for later, in case it gets deleted.
@@ -26,11 +32,11 @@ async def cache_image(image, session):
         print('Warning: Failed to get image ' + image['representations']['full'])
         return
 
-    with open('cache/' + str(image['id']) + '.' + image['format'], 'wb') as fp:
-        fp.write(content)
+    with open(f"cache/{image['id']}.{image['format']}", 'wb') as file:
+        file.write(content)
 
-    with open('cache/' + str(image['id']) + '.json', 'w') as fp:
-        json.dump(image, fp)
+    with open(f"cache/{image['id']}.json", 'w') as file:
+        file.close()
 
 # Send the Phoenix heartbeat event every 30 seconds.
 async def heartbeat(ws):
