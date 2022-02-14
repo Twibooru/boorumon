@@ -34,8 +34,8 @@ if (not os.path.exists(cachefp)):
 
 PROXY = config['proxy']
 
-# Save an image file and metadata for later, in case it gets deleted.
-async def cache_image(image, session, wsurl: str):
+async def cache_image(image: dict, session: aiohttp.ClientSession, wsurl: str):
+    ''' Save an image file and metadata for later, in case it gets deleted. '''
     response = ''
     if (wsurl == PONER_WS_URL):
         response = await session.get(f"https://ponerpics.org/{image['representations']['full']}", proxy=PROXY)
@@ -53,8 +53,8 @@ async def cache_image(image, session, wsurl: str):
     with open(f"cache/{image['id']}.json", 'w') as file:
         file.close()
 
-# Send the Phoenix heartbeat event every 30 seconds.
-async def heartbeat(ws):
+async def heartbeat(ws: websockets.client.WebSocketClientProtocol):
+    ''' Send the Phoenix heartbeat event every 30 seconds. '''
     await ws.send(json.dumps(HEARTBEAT_EVENT))
     await asyncio.sleep(30)
     asyncio.get_event_loop().create_task(heartbeat(ws))
