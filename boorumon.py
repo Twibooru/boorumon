@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+
+import os
 import json
 import toml
 import asyncio
@@ -6,43 +8,62 @@ import aiohttp
 import aioredis
 import websockets
 
-DERPI_WS_URL = 'wss://derpibooru.org/socket/websocket?vsn=2.0.0'
-JOIN_EVENT = [0, 0, 'firehose', 'phx_join', {}]
+PONER_WS_URL    = 'wss://ponerpics.org/socket/websocket?vsn=2.0.0'
+DERPI_WS_URL    = 'wss://derpibooru.org/socket/websocket?vsn=2.0.0'
+JOIN_EVENT      = [0, 0, 'firehose', 'phx_join', {}]
 HEARTBEAT_EVENT = [0, 0, 'phoenix', 'heartbeat', {}]
 
+inDebugMode = False
+
+# Enable verbose mode
+if inDebugMode:
+    import logging
+    logger = logging.getLogger('websockets')
+    logger.setLevel(logging.DEBUG)
+    logger.addHandler(logging.StreamHandler())
+
 pending_images = {}
-session = aiohttp.ClientSession()
 
 with open('boorumon.toml', 'r') as fp:
     config = toml.load(fp)
 
+# Make cache directory if not available
+cachefp = './cache'
+if (not os.path.exists(cachefp)):
+    os.mkdir(cachefp)
+
 PROXY = config['proxy']
 
-# Save an image file and metadata for later, in case it gets deleted.
-async def cache_image(image):
-    async with session.get(image['representations']['full'], proxy=PROXY) as response:
-        content = await response.read()
+async def cache_image(image: dict, session: aiohttp.ClientSession, wsurl: str):
+    ''' Save an image file and metadata for later, in case it gets deleted. '''
+    response = ''
+    if (wsurl == PONER_WS_URL):
+        response = await session.get(f"https://ponerpics.org/{image['representations']['full']}", proxy=PROXY)
+    elif (wsurl == DERPI_WS_URL):
+        response = await session.get(image['representations']['full'], proxy=PROXY)
+    content = await response.read()
 
     if response.status != 200:
         print('Warning: Failed to get image ' + image['representations']['full'])
         return
-    
-    with open('cache/' + str(image['id']) + '.' + image['format'], 'wb') as fp:
-        fp.write(content)
 
-    with open('cache/' + str(image['id']) + '.json', 'w') as fp:
-        json.dump(image, fp)
+    with open(f"cache/{image['id']}.{image['format']}", 'wb') as file:
+        file.write(content)
 
-# Send the Phoenix heartbeat event every 30 seconds.
-async def heartbeat(ws):
+    with open(f"cache/{image['id']}.json", 'w') as file:
+        file.close()
+
+async def heartbeat(ws: websockets.client.WebSocketClientProtocol):
+    ''' Send the Phoenix heartbeat event every 30 seconds. '''
     await ws.send(json.dumps(HEARTBEAT_EVENT))
+    await asyncio.sleep(30)
+    asyncio.get_event_loop().create_task(heartbeat(ws))
 
-    asyncio.get_event_loop().call_later(30, asyncio.create_task, heartbeat(ws))
-
-async def derpimon():
+async def monbooru(session: aiohttp.ClientSession, wsurl: str):
+    ''' Monitor image boorus for new uploads '''
     redis = aioredis.from_url('redis://localhost/')
 
-    async with websockets.connect(DERPI_WS_URL) as ws:
+    async with websockets.connect(wsurl) as ws:
         await ws.send(json.dumps(JOIN_EVENT))
         await heartbeat(ws)
 
@@ -50,11 +71,20 @@ async def derpimon():
             joinRef, ref, topic, event, payload = json.loads(message)
             if event == 'image:create':
                 pending_images[payload['image']['id']] = payload['image']
-                await redis.publish('derpimon', f"https://derpibooru.org/images/{payload['image']['id']}")
+                if (wsurl == DERPI_WS_URL):
+                    await redis.publish('boorumon', f"https://derpibooru.org/images/{payload['image']['id']}")
+                elif (wsurl == PONER_WS_URL):
+                    await redis.publish('boorumon', f"https://ponerpics.org/images/{payload['image']['id']}")
                 print(payload)
             elif event == 'image:process':
                 image_id = payload['image_id']
                 if image_id in pending_images:
-                    await cache_image(pending_images[image_id])
+                    await cache_image(pending_images[image_id], session, wsurl)
                     del pending_images[image_id]
-asyncio.get_event_loop().run_until_complete(derpimon())
+async def main():
+    session = aiohttp.ClientSession()
+    await asyncio.gather(
+        monbooru(session, DERPI_WS_URL),
+        monbooru(session, PONER_WS_URL)
+    )
+asyncio.run(main())
