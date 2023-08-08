@@ -63,12 +63,16 @@ async def cache_image(image: dict, session: aiohttp.ClientSession, wsurl: WsEndp
         print(wsurl.name + ': Warning: Failed to get image ' + image['representations']['full'])
         return
 
+
+    if not os.path.exists(os.path.join(CACHE_DIR, wsurl.name.lower())):
+        os.mkdir(os.path.join(CACHE_DIR, wsurl.name.lower()))
+
     # save actual image
-    with open(os.path.join(CACHE_DIR, str(image['id']) + '.' + image['format']), 'wb') as fp:
+    with open(os.path.join(CACHE_DIR, wsurl.name.lower(), str(image['id']) + '.' + image['format']), 'wb') as fp:
         fp.write(content)
 
     # save API response
-    with open(os.path.join(CACHE_DIR, str(image['id']) + '.json'), 'w') as fp:
+    with open(os.path.join(CACHE_DIR, wsurl.name.lower(), str(image['id']) + '.json'), 'w') as fp:
         json.dump(image, fp)
 
 async def heartbeat(ws):
@@ -84,6 +88,8 @@ async def monbooru(session: aiohttp.ClientSession, wsurl: WsEndpoint):
     async with websockets.connect(wsurl.ws) as ws:
         await ws.send(json.dumps(JOIN_EVENT))
         await heartbeat(ws)
+
+        print(wsurl.name + ': Connected.')
 
         async for message in ws:
             joinRef, ref, topic, event, payload = json.loads(message)
