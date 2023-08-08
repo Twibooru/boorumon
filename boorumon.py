@@ -15,15 +15,17 @@ JOIN_EVENT      = [0, 0, 'firehose', 'phx_join', {}]
 HEARTBEAT_EVENT = [0, 0, 'phoenix', 'heartbeat', {}]
 
 # ws = WebSocket URL, cdn = prefix prepended to image view URLs, root = prefix prepended to image ID
-WsEndpoint = namedtuple('WsEndpoint', ('ws', 'cdn', 'root'))
+WsEndpoint = namedtuple('WsEndpoint', ('name', 'ws', 'cdn', 'root'))
 
 WEBSOCKET_ENDPOINTS = [
     WsEndpoint(
+        name='PonerPics',
         ws='wss://ponerpics.org/socket/websocket?vsn=2.0.0',
         cdn='https://ponerpics.org/',
         root='https://ponerpics.org/'
     ),
     WsEndpoint(
+        name='Derpibooru',
         ws='wss://derpibooru.org/socket/websocket?vsn=2.0.0',
         cdn='',
         root='https://derpibooru.org/'
@@ -58,7 +60,7 @@ async def cache_image(image: dict, session: aiohttp.ClientSession, wsurl: WsEndp
     content = await response.read()
 
     if response.status != 200:
-        print('Warning: Failed to get image ' + image['representations']['full'])
+        print(wsurl.name + ': Warning: Failed to get image ' + image['representations']['full'])
         return
 
     # save actual image
@@ -69,7 +71,7 @@ async def cache_image(image: dict, session: aiohttp.ClientSession, wsurl: WsEndp
     with open(os.path.join(CACHE_DIR, str(image['id']) + '.json'), 'w') as fp:
         json.dump(image, fp)
 
-async def heartbeat(ws: websockets.client.WebSocketClientProtocol):
+async def heartbeat(ws):
     ''' Send the Phoenix heartbeat event every 30 seconds. '''
     await ws.send(json.dumps(HEARTBEAT_EVENT))
     await asyncio.sleep(30)
@@ -88,7 +90,7 @@ async def monbooru(session: aiohttp.ClientSession, wsurl: WsEndpoint):
             if event == 'image:create':
                 pending_images[payload['image']['id']] = payload['image']
                 await redis.publish('boorumon', wsurl.root + '/images/' + payload['image']['id'])
-                print(payload)
+                print(wsurl.name + ': ' + str(payload))
             elif event == 'image:process':
                 image_id = payload['image_id']
                 if image_id in pending_images:
