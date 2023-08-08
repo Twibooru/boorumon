@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-
 import os
+import sys
 import json
 import toml
 import asyncio
@@ -8,50 +8,66 @@ import aiohttp
 import aioredis
 import websockets
 
-PONER_WS_URL    = 'wss://ponerpics.org/socket/websocket?vsn=2.0.0'
-DERPI_WS_URL    = 'wss://derpibooru.org/socket/websocket?vsn=2.0.0'
+from collections import namedtuple
+
+CACHE_DIR = 'cache/'
 JOIN_EVENT      = [0, 0, 'firehose', 'phx_join', {}]
 HEARTBEAT_EVENT = [0, 0, 'phoenix', 'heartbeat', {}]
 
-inDebugMode = False
+# ws = WebSocket URL, cdn = prefix prepended to image view URLs, root = prefix prepended to image ID
+WsEndpoint = namedtuple('WsEndpoint', ('ws', 'cdn', 'root'))
 
-# Enable verbose mode
-if inDebugMode:
-    import logging
-    logger = logging.getLogger('websockets')
-    logger.setLevel(logging.DEBUG)
-    logger.addHandler(logging.StreamHandler())
+WEBSOCKET_ENDPOINTS = [
+    WsEndpoint(
+        ws='wss://ponerpics.org/socket/websocket?vsn=2.0.0',
+        cdn='https://ponerpics.org/',
+        root='https://ponerpics.org/'
+    ),
+    WsEndpoint(
+        ws='wss://derpibooru.org/socket/websocket?vsn=2.0.0',
+        cdn='',
+        root='https://derpibooru.org/'
+    )
+]
 
 pending_images = {}
 
 with open('boorumon.toml', 'r') as fp:
     config = toml.load(fp)
 
+# Enable verbose mode
+if config['debug']:
+    import logging
+    logger = logging.getLogger('websockets')
+    logger.setLevel(logging.DEBUG)
+    logger.addHandler(logging.StreamHandler())
+
 # Make cache directory if not available
-cachefp = './cache'
-if (not os.path.exists(cachefp)):
-    os.mkdir(cachefp)
+if not os.path.exists(CACHE_DIR):
+    os.mkdir(CACHE_DIR)
 
 PROXY = config['proxy']
 
-async def cache_image(image: dict, session: aiohttp.ClientSession, wsurl: str):
+if PROXY and ('http_proxy' not in os.environ or 'https_proxy' not in os.environ):
+    print(f"You should probably set http_proxy and https_proxy environment variables to {PROXY}...")
+    sys.exit(1)
+
+async def cache_image(image: dict, session: aiohttp.ClientSession, wsurl: WsEndpoint):
     ''' Save an image file and metadata for later, in case it gets deleted. '''
-    response = ''
-    if (wsurl == PONER_WS_URL):
-        response = await session.get(f"https://ponerpics.org/{image['representations']['full']}", proxy=PROXY)
-    elif (wsurl == DERPI_WS_URL):
-        response = await session.get(image['representations']['full'], proxy=PROXY)
+    response = await session.get(wsurl.cdn + image['representations']['full'], proxy=PROXY)
     content = await response.read()
 
     if response.status != 200:
         print('Warning: Failed to get image ' + image['representations']['full'])
         return
 
-    with open(f"cache/{image['id']}.{image['format']}", 'wb') as file:
-        file.write(content)
+    # save actual image
+    with open(os.path.join(CACHE_DIR, str(image['id']) + '.' + image['format']), 'wb') as fp:
+        fp.write(content)
 
-    with open(f"cache/{image['id']}.json", 'w') as file:
-        file.close()
+    # save API response
+    with open(os.path.join(CACHE_DIR, str(image['id']) + '.json'), 'w') as fp:
+        json.dump(image, fp)
 
 async def heartbeat(ws: websockets.client.WebSocketClientProtocol):
     ''' Send the Phoenix heartbeat event every 30 seconds. '''
@@ -59,11 +75,11 @@ async def heartbeat(ws: websockets.client.WebSocketClientProtocol):
     await asyncio.sleep(30)
     asyncio.get_event_loop().create_task(heartbeat(ws))
 
-async def monbooru(session: aiohttp.ClientSession, wsurl: str):
+async def monbooru(session: aiohttp.ClientSession, wsurl: WsEndpoint):
     ''' Monitor image boorus for new uploads '''
     redis = aioredis.from_url('redis://localhost/')
 
-    async with websockets.connect(wsurl) as ws:
+    async with websockets.connect(wsurl.ws) as ws:
         await ws.send(json.dumps(JOIN_EVENT))
         await heartbeat(ws)
 
@@ -71,20 +87,18 @@ async def monbooru(session: aiohttp.ClientSession, wsurl: str):
             joinRef, ref, topic, event, payload = json.loads(message)
             if event == 'image:create':
                 pending_images[payload['image']['id']] = payload['image']
-                if (wsurl == DERPI_WS_URL):
-                    await redis.publish('boorumon', f"https://derpibooru.org/images/{payload['image']['id']}")
-                elif (wsurl == PONER_WS_URL):
-                    await redis.publish('boorumon', f"https://ponerpics.org/images/{payload['image']['id']}")
+                await redis.publish('boorumon', wsurl.root + '/images/' + payload['image']['id'])
                 print(payload)
             elif event == 'image:process':
                 image_id = payload['image_id']
                 if image_id in pending_images:
                     await cache_image(pending_images[image_id], session, wsurl)
                     del pending_images[image_id]
+
 async def main():
     session = aiohttp.ClientSession()
-    await asyncio.gather(
-        monbooru(session, DERPI_WS_URL),
-        monbooru(session, PONER_WS_URL)
-    )
+    await asyncio.gather(*[
+        monbooru(session, endpoint) for endpoint in WEBSOCKET_ENDPOINTS
+    ])
+
 asyncio.run(main())
