@@ -8,6 +8,7 @@ import aiohttp
 import aioredis
 import websockets
 
+from urllib.parse import urljoin
 from collections import namedtuple
 
 CACHE_DIR = 'cache/'
@@ -96,7 +97,7 @@ async def monbooru(session: aiohttp.ClientSession, wsurl: WsEndpoint):
                 joinRef, ref, topic, event, payload = json.loads(message)
                 if event == 'image:create':
                     pending_images[payload['image']['id']] = payload['image']
-                    await redis.publish('boorumon', wsurl.root + '/images/' + str(payload['image']['id']))
+                    await redis.publish('boorumon', urljoin(wsurl.root, '/images/' + str(payload['image']['id'])))
                     print(wsurl.name + ': ' + str(payload))
                 elif event == 'image:process':
                     image_id = payload['image_id']
