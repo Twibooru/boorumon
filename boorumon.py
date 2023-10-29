@@ -85,23 +85,26 @@ async def monbooru(session: aiohttp.ClientSession, wsurl: WsEndpoint):
     ''' Monitor image boorus for new uploads '''
     redis = aioredis.from_url('redis://localhost/')
 
-    async with websockets.connect(wsurl.ws) as ws:
-        await ws.send(json.dumps(JOIN_EVENT))
-        await heartbeat(ws)
-
-        print(wsurl.name + ': Connected.')
-
-        async for message in ws:
-            joinRef, ref, topic, event, payload = json.loads(message)
-            if event == 'image:create':
-                pending_images[payload['image']['id']] = payload['image']
-                await redis.publish('boorumon', wsurl.root + '/images/' + str(payload['image']['id']))
-                print(wsurl.name + ': ' + str(payload))
-            elif event == 'image:process':
-                image_id = payload['image_id']
-                if image_id in pending_images:
-                    await cache_image(pending_images[image_id], session, wsurl)
-                    del pending_images[image_id]
+    while True:
+        async with websockets.connect(wsurl.ws) as ws:
+            await ws.send(json.dumps(JOIN_EVENT))
+            await heartbeat(ws)
+    
+            print(wsurl.name + ': Connected.')
+    
+            async for message in ws:
+                joinRef, ref, topic, event, payload = json.loads(message)
+                if event == 'image:create':
+                    pending_images[payload['image']['id']] = payload['image']
+                    await redis.publish('boorumon', wsurl.root + '/images/' + str(payload['image']['id']))
+                    print(wsurl.name + ': ' + str(payload))
+                elif event == 'image:process':
+                    image_id = payload['image_id']
+                    if image_id in pending_images:
+                        await cache_image(pending_images[image_id], session, wsurl)
+                        del pending_images[image_id]
+        print(wsurl.name + ': Disconnected.')
+        await asyncio.sleep(10)
 
 async def main():
     session = aiohttp.ClientSession()
