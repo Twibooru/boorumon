@@ -10,6 +10,7 @@ import websockets
 
 from urllib.parse import urljoin
 from collections import namedtuple
+from websockets_proxy import Proxy, proxy_connect
 
 CACHE_DIR = 'cache/'
 JOIN_EVENT      = [0, 0, 'firehose', 'phx_join', {}]
@@ -84,10 +85,11 @@ async def heartbeat(ws):
 
 async def monbooru(session: aiohttp.ClientSession, wsurl: WsEndpoint):
     ''' Monitor image boorus for new uploads '''
+    proxy = Proxy.from_url(PROXY)
     redis = aioredis.from_url('redis://localhost/')
 
     while True:
-        async with websockets.connect(wsurl.ws) as ws:
+        async with proxy_connect(wsurl.ws, proxy=proxy) as ws:
             await ws.send(json.dumps(JOIN_EVENT))
             await heartbeat(ws)
     
